@@ -1,0 +1,28 @@
+{
+    "env": {
+      "es2021": true,
+      "node": true
+    },
+    "extends": [
+      "airbnb-base"
+    ],
+    "parserOptions": {
+      "ecmaVersion": 2021,
+      "sourceType": "module"
+    },
+    "rules": {
+      "import/extensions": [
+        "error",
+        "ignorePackages",
+        {
+          "js": "always"
+        }
+      ],
+      "no-console": "off",
+      "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+      "max-len": ["error", { "code": 100 }],
+      "no-underscore-dangle": ["error", { "allow": ["_id"] }],
+      "import/prefer-default-export": "off",
+      "no-param-reassign": ["error", { "props": false }]
+    }
+  }
