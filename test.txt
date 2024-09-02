@@ -1,0 +1,767 @@
+-- /Users/mert/Desktop/social-media-scheduler/tests/authRoutes.test.js --
+// tests/authRoutes.test.js
+import request from 'supertest';
+import app from '../src/index.js';
+import prisma from '../src/db/prisma.js';
+
+describe('Auth Routes', () => {
+  beforeAll(async () => {
+    // Clear the database before tests
+    await prisma.user.deleteMany();
+  });
+
+  afterAll(async () => {
+    // Clean up test database
+    await prisma.scheduledPost.deleteMany();
+    await prisma.user.deleteMany();
+    await prisma.$disconnect();
+  });
+
+  beforeEach(async () => {
+    // Clear database before each test
+    await prisma.scheduledPost.deleteMany();
+    await prisma.user.deleteMany();
+  });
+
+  it('should register a new user', async () => {
+    const res = await request(app)
+      .post('/auth/register')
+      .send({
+        username: 'testuser2',
+        email: 'test2@example.com',
+        password: 'password123',
+      });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toHaveProperty('user');
+    expect(res.body.user).toHaveProperty('id');
+    expect(res.body.user.username).toBe('testuser2');
+  });
+
+  it('should login a user', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({
+        email: 'test@gmail.com',
+        password: 'test123',
+      });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveProperty('token');
+  });
+
+  it('should not login with incorrect credentials', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({
+        email: 'test@example.com',
+        password: 'wrongpassword'
+      });
+    expect(res.statusCode).toBe(401);
+  });
+});
+-- /Users/mert/Desktop/social-media-scheduler/tests/postRoutes.test.js --
+// tests/postRoutes.test.js
+import jwt from 'jsonwebtoken';
+import request from 'supertest';
+import app from '../src/index.js';
+import prisma from '../src/db/prisma.js';
+
+describe('Post Routes', () => {
+  let authToken;
+  let userId;
+
+  beforeAll(async () => {
+    // Clear the database and create a test user
+    await prisma.scheduledPost.deleteMany();
+    await prisma.user.deleteMany();
+    const user = await prisma.user.create({
+      data: {
+        username: 'testuser',
+        email: 'test@example.com',
+        password: 'hashedpassword',
+      },
+    });
+    userId = user.id;
+    authToken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('should create a new post', async () => {
+    const res = await request(app)
+      .post('/api/posts')
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        content: 'Test post',
+        platform: 'twitter',
+        scheduleTime: new Date().toISOString()
+      });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toHaveProperty('id');
+    expect(res.body.content).toBe('Test post');
+  });
+
+  it('should get all posts for a user', async () => {
+    const res = await request(app)
+      .get('/api/posts')
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(res.statusCode).toBe(200);
+    expect(Array.isArray(res.body)).toBeTruthy();
+    expect(res.body.length).toBeGreaterThan(0);
+  });
+
+  it('should get a specific post', async () => {
+    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
+    const res = await request(app)
+      .get(`/api/posts/${post.id}`)
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveProperty('id', post.id);
+  });
+
+  it('should update a post', async () => {
+    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
+    const res = await request(app)
+      .put(`/api/posts/${post.id}`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        content: 'Updated test post'
+      });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.content).toBe('Updated test post');
+  });
+
+  it('should delete a post', async () => {
+    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
+    const res = await request(app)
+      .delete(`/api/posts/${post.id}`)
+      .set('Authorization', `Bearer ${authToken}`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe('Post deleted successfully');
+  });
+});
+-- /Users/mert/Desktop/social-media-scheduler/tests/redis.test.js --
+// tests/redis.test.js
+import request from 'supertest';
+import app from '../src/index.js';
+
+describe('Redis', () => {
+  it('should connect to Redis and perform a test operation', async () => {
+    const res = await request(app).get('/redis-test');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe('Hello from Redis!');
+  });
+});
+-- /Users/mert/Desktop/social-media-scheduler/src/middleware/authMiddleware.js --
+import jwt from 'jsonwebtoken';
+
+export const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (token == null) {
+    return res.sendStatus(401);
+  }
+
+  return jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.sendStatus(403);
+    }
+    req.user = user;
+    return next();
+  });
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/middleware/errorMiddleware.js --
+// src/middleware/errorMiddleware.js
+import logger from '../utils/logger.js';
+
+export const errorHandler = (err, req, res, next) => {
+  logger.error(err.stack);
+
+  const statusCode = res.statusCode === 200 ? 500 : res.statusCode;
+  res.status(statusCode);
+  res.json({
+    message: err.message,
+    stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack,
+  });
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/middleware/validationMiddleware.js --
+// src/middleware/validationMiddleware.js
+import { validationResult } from 'express-validator';
+
+export const validateRequest = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() });
+  }
+  next();
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/middleware/rateLimitMiddleware.js --
+// src/middleware/rateLimitMiddleware.js
+import rateLimit from 'express-rate-limit';
+import RedisStore from 'rate-limit-redis';
+import redisClient from '../config/redis.js';
+
+export const apiLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+  }),
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+-- /Users/mert/Desktop/social-media-scheduler/src/config/redis.js --
+// src/config/redis.js
+import Redis from 'ioredis';
+import { promisify } from 'util';
+import logger from '../utils/logger.js';
+
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+
+let redisClient;
+
+try {
+  redisClient = new Redis(redisUrl, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    retryStrategy(times) {
+      const delay = Math.min(times * 50, 2000);
+      return delay;
+    }
+  });
+
+  redisClient.on('error', (error) => {
+    logger.error('Redis connection error:', error);
+  });
+
+  redisClient.on('connect', () => {
+    logger.info(`Successfully connected to Redis at ${redisUrl}`);
+  });
+} catch (error) {
+  logger.error('Failed to create Redis client:', error);
+  redisClient = null;
+}
+
+export const getAsync = redisClient ? promisify(redisClient.get).bind(redisClient)
+  : async () => null;
+export const setAsync = redisClient ? promisify(redisClient.set).bind(redisClient)
+  : async () => null;
+export const delAsync = redisClient ? promisify(redisClient.del).bind(redisClient)
+  : async () => null;
+
+export const cacheMiddleware = async (req, res, next) => {
+  if (!redisClient) {
+    return next();
+  }
+
+  const key = `cache:${req.originalUrl}`;
+  const cachedResponse = await getAsync(key);
+
+  if (cachedResponse) {
+    return res.json(JSON.parse(cachedResponse));
+  }
+
+  res.sendResponse = res.json;
+  res.json = (body) => {
+    setAsync(key, JSON.stringify(body), 'EX', 3600); // Cache for 1 hour
+    res.sendResponse(body);
+  };
+
+  next();
+};
+
+export default redisClient;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/index.js --
+// src/index.js
+import dotenv from 'dotenv';
+import express from 'express';
+import authRoutes from './routes/authRoutes.js';
+import postRoutes from './routes/postRoutes.js';
+import { authenticateToken } from './middleware/authMiddleware.js';
+import { errorHandler } from './middleware/errorMiddleware.js';
+import { apiLimiter } from './middleware/rateLimitMiddleware.js';
+import logger from './utils/logger.js';
+import redisClient, { cacheMiddleware } from './config/redis.js';
+
+dotenv.config();
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(apiLimiter);
+
+// Redis test route
+app.get('/redis-test', async (req, res) => {
+  if (!redisClient) {
+    return res.status(500).json({ message: 'Redis client is not initialized' });
+  }
+  try {
+    await redisClient.set('test_key', 'Hello from Redis!');
+    const value = await redisClient.get('test_key');
+    res.json({ message: value });
+  } catch (error) {
+    logger.error('Redis test failed:', error);
+    res.status(500).json({ message: 'Redis test failed', error: error.message });
+  }
+});
+
+// Basic route
+app.get('/', (req, res) => {
+  res.json({ message: 'Welcome to the Social Media Scheduler API' });
+});
+
+// Use auth routes
+app.use('/auth', authRoutes);
+
+// Use post routes (protected and cached)
+app.use('/api/posts', authenticateToken, cacheMiddleware, postRoutes);
+
+// Error handling middleware
+app.use(errorHandler);
+
+// Start server
+app.listen(port, () => {
+  logger.info(`Server running on port ${port}`);
+});
+
+export default app;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/utils/logger.js --
+// src/utils/logger.js
+import winston from 'winston';
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  defaultMeta: { service: 'social-media-scheduler' },
+  transports: [
+    new winston.transports.File({ filename: 'error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'combined.log' }),
+  ],
+});
+
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.simple(),
+  }));
+}
+
+export default logger;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/models/userModel.js --
+import bcrypt from 'bcrypt';
+import prisma from '../db/prisma.js';
+
+export const createUser = async (username, email, password) => {
+  const hashedPassword = await bcrypt.hash(password, 10);
+  return prisma.user.create({
+    data: { username, email, password: hashedPassword },
+    select: { id: true, username: true, email: true },
+  });
+};
+
+export const getUserByEmail = async (email) => prisma.user.findUnique({
+  where: { email },
+  include: { twitterAuth: true, instagramAuth: true },
+});
+
+export const addTwitterAuth = async (
+  userId,
+  accessToken,
+  refreshToken,
+  tokenExpiry,
+  screenName,
+) => prisma.twitterAuth.upsert({
+  where: { userId },
+  update:
+  {
+    accessToken, refreshToken, tokenExpiry, screenName,
+  },
+  create: {
+    userId, accessToken, refreshToken, tokenExpiry, screenName,
+  },
+});
+
+export const addInstagramAuth = async (
+  userId,
+  accessToken,
+  tokenExpiry,
+  username,
+) => prisma.twitterAuth.upsert({
+  where: { userId },
+  update: { accessToken, tokenExpiry, username },
+  create: {
+    userId, accessToken, tokenExpiry, username,
+  },
+});
+
+export const getUserWithSocialConnections = async (userId) => prisma.user.findUnique({
+  where: { id: userId },
+  include: { twitterAuth: true, instagramAuth: true },
+});
+
+-- /Users/mert/Desktop/social-media-scheduler/src/db/prisma.js --
+import { PrismaClient } from '@prisma/client';
+
+const prismaClientSingleton = () => new PrismaClient();
+
+const prisma = process.env.NODE_ENV === 'production'
+  ? prismaClientSingleton()
+  : global.prisma ?? (global.prisma = prismaClientSingleton());
+
+export default prisma;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/controllers/postController.js --
+// src/controllers/postController.js
+import prisma from '../db/prisma.js';
+import { schedulePost, cancelScheduledPost } from '../services/schedulerService.js';
+import logger from '../utils/logger.js';
+
+export const createPost = async (req, res) => {
+  try {
+    const { content, platform, scheduleTime } = req.body;
+    const userId = req.user.userId;
+
+    const post = await prisma.scheduledPost.create({
+      data: {
+        userId,
+        content,
+        platform,
+        scheduleTime,
+        status: 'pending'
+      }
+    });
+
+    await schedulePost(post.id, scheduleTime);
+
+    res.status(201).json(post);
+  } catch (error) {
+    logger.error('Error creating post:', error);
+    res.status(500).json({ message: 'Error creating post' });
+  }
+};
+
+export const getPosts = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const posts = await prisma.scheduledPost.findMany({
+      where: { userId },
+      orderBy: { scheduleTime: 'asc' }
+    });
+    res.json(posts);
+  } catch (error) {
+    logger.error('Error fetching posts:', error);
+    res.status(500).json({ message: 'Error fetching posts' });
+  }
+};
+
+export const getPost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const post = await prisma.scheduledPost.findUnique({
+      where: { id, userId }
+    });
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    res.json(post);
+  } catch (error) {
+    logger.error('Error fetching post:', error);
+    res.status(500).json({ message: 'Error fetching post' });
+  }
+};
+
+export const updatePost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { content, platform, scheduleTime } = req.body;
+    const userId = req.user.userId;
+
+    const existingPost = await prisma.scheduledPost.findUnique({
+      where: { id, userId }
+    });
+
+    if (!existingPost) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    if (existingPost.status === 'published') {
+      return res.status(400).json({ message: 'Cannot update published post' });
+    }
+
+    const updatedPost = await prisma.scheduledPost.update({
+      where: { id },
+      data: { content, platform, scheduleTime }
+    });
+
+    await cancelScheduledPost(id);
+    await schedulePost(id, scheduleTime);
+
+    res.json(updatedPost);
+  } catch (error) {
+    logger.error('Error updating post:', error);
+    res.status(500).json({ message: 'Error updating post' });
+  }
+};
+
+export const deletePost = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+
+    const existingPost = await prisma.scheduledPost.findUnique({
+      where: { id, userId }
+    });
+
+    if (!existingPost) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    await prisma.scheduledPost.delete({ where: { id } });
+    await cancelScheduledPost(id);
+
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    logger.error('Error deleting post:', error);
+    res.status(500).json({ message: 'Error deleting post' });
+  }
+};
+
+export const getPostAnalytics = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+
+    const post = await prisma.scheduledPost.findUnique({
+      where: { id, userId }
+    });
+
+    if (!post) {
+      return res.status(404).json({ message: 'Post not found' });
+    }
+
+    // Here you would integrate with the social media APIs to fetch actual analytics
+    // For now, we'll return placeholder data
+    const analytics = {
+      likes: Math.floor(Math.random() * 100),
+      shares: Math.floor(Math.random() * 50),
+      comments: Math.floor(Math.random() * 30)
+    };
+
+    res.json(analytics);
+  } catch (error) {
+    logger.error('Error fetching post analytics:', error);
+    res.status(500).json({ message: 'Error fetching post analytics' });
+  }
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/controllers/authController.js --
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+import { createUser, getUserByEmail } from '../models/userModel.js';
+
+export const register = async (req, res) => {
+  try {
+    const { username, email, password } = req.body;
+    const user = await createUser(username, email, password);
+    res.status(201).json({ message: 'User created successfully', user });
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating user', error: error.message });
+  }
+};
+
+export const login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await getUserByEmail(email);
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    return res.json({ message: 'Login successful', token });
+  } catch (error) {
+    return res.status(500).json({ message: 'Error logging in', error: error.message });
+  }
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/routes/authRoutes.js --
+import express from 'express';
+import { register, login } from '../controllers/authController.js';
+
+const router = express.Router();
+
+router.post('/register', register);
+router.post('/login', login);
+
+export default router;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/routes/postRoutes.js --
+// src/routes/postRoutes.js
+import express from 'express';
+import { body, param } from 'express-validator';
+import {
+  createPost,
+  getPosts,
+  getPost,
+  updatePost,
+  deletePost,
+  getPostAnalytics,
+} from '../controllers/postController.js';
+import { validateRequest } from '../middleware/validationMiddleware.js';
+
+const router = express.Router();
+
+// Create a new scheduled post
+router.post(
+  '/posts',
+  [
+    body('content').notEmpty().withMessage('Content is required'),
+    body('platform').isIn(['twitter', 'instagram']).withMessage('Invalid platform'),
+    body('scheduleTime').isISO8601().toDate().withMessage('Invalid schedule time'),
+  ],
+  validateRequest,
+  createPost,
+);
+
+// Get all scheduled posts for the authenticated user
+router.get('/posts', getPosts);
+
+// Get a specific scheduled post
+router.get('/posts/:id', param('id').isUUID(), validateRequest, getPost);
+
+// Update a scheduled post
+router.put(
+  '/posts/:id',
+  [
+    param('id').isUUID(),
+    body('content').optional().notEmpty(),
+    body('platform').optional().isIn(['twitter', 'instagram']),
+    body('scheduleTime').optional().isISO8601().toDate(),
+  ],
+  validateRequest,
+  updatePost,
+);
+
+// Delete a scheduled post
+router.delete('/posts/:id', param('id').isUUID(), validateRequest, deletePost);
+
+// Get analytics for a specific post
+router.get('/posts/:id/analytics', param('id').isUUID(), validateRequest, getPostAnalytics);
+
+export default router;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/routes/protectedRoute.js --
+import express from 'express';
+import { authenticateToken } from '../middleware/authMiddleware.js';
+
+const router = express.Router();
+
+router.get('/profile', authenticateToken, (req, res) => {
+  // The user information is available in req.user
+  res.json({ message: 'Protected route accessed', user: req.user });
+});
+
+export default router;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/services/socialMediaService.js --
+// src/services/socialMediaService.js
+import Twitter from 'twitter-lite';
+import Instagram from 'instagram-private-api';
+import prisma from '../db/prisma.js';
+
+const getTwitterClient = async (userId) => {
+  const twitterAuth = await prisma.twitterAuth.findUnique({ where: { userId } });
+  if (!twitterAuth) throw new Error('Twitter auth not found');
+
+  return new Twitter({
+    consumer_key: process.env.TWITTER_CONSUMER_KEY,
+    consumer_secret: process.env.TWITTER_CONSUMER_SECRET,
+    access_token_key: twitterAuth.accessToken,
+    access_token_secret: twitterAuth.refreshToken,
+  });
+};
+
+const getInstagramClient = async (userId) => {
+  const instagramAuth = await prisma.instagramAuth.findUnique({ where: { userId } });
+  if (!instagramAuth) throw new Error('Instagram auth not found');
+
+  const ig = new Instagram.IgApiClient();
+  ig.state.generateDevice(userId);
+  await ig.account.login(instagramAuth.username, instagramAuth.accessToken);
+  return ig;
+};
+
+export const publishToTwitter = async (post) => {
+  const client = await getTwitterClient(post.userId);
+  await client.post('statuses/update', { status: post.content });
+};
+
+export const publishToInstagram = async (post) => {
+  const client = await getInstagramClient(post.userId);
+  await client.publish.photo({
+    file: post.imageUrl,
+    caption: post.content,
+  });
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/services/schedulerService.js --
+// src/services/schedulerService.js
+import cron from 'node-cron';
+import prisma from '../db/prisma.js';
+import redisClient from '../config/redis.js';
+import { publishToTwitter, publishToInstagram } from './socialMediaService.js';
+
+const schedulePost = async (postId, scheduleTime) => {
+  const job = cron.schedule(scheduleTime, async () => {
+    const post = await prisma.scheduledPost.findUnique({ where: { id: postId } });
+    if (!post) return;
+
+    try {
+      if (post.platform === 'twitter') {
+        await publishToTwitter(post);
+      } else if (post.platform === 'instagram') {
+        await publishToInstagram(post);
+      }
+
+      await prisma.scheduledPost.update({
+        where: { id: postId },
+        data: { status: 'published' },
+      });
+    } catch (error) {
+      console.error(`Failed to publish post ${postId}:`, error);
+      await prisma.scheduledPost.update({
+        where: { id: postId },
+        data: { status: 'failed' },
+      });
+    }
+  });
+
+  await redisClient.set(`job:${postId}`, job.toString());
+};
+
+const cancelScheduledPost = async (postId) => {
+  const jobString = await redisClient.get(`job:${postId}`);
+  if (jobString) {
+    const job = cron.schedule(jobString);
+    job.stop();
+    await redisClient.del(`job:${postId}`);
+  }
+};
+
+export { schedulePost, cancelScheduledPost };
+

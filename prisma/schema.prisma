@@ -13,33 +13,46 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
-  id           Int       @id @default(autoincrement())
-  username     String    @unique
-  email        String    @unique
-  password     String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  twitterAuth  TwitterAuth?
+  id            String         @id @default(uuid())
+  username      String         @unique
+  email         String         @unique
+  password      String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  twitterAuth   TwitterAuth?
   instagramAuth InstagramAuth?
+  scheduledPosts ScheduledPost[]
 }
 
 model TwitterAuth {
-  id            Int      @id @default(autoincrement())
-  userId        Int      @unique
-  user          User     @relation(fields: [userId], references: [id])
-  accessToken   String
-  refreshToken  String?
-  tokenExpiry   DateTime?
-  screenName    String?
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  accessToken  String
+  refreshToken String
+  tokenExpiry  DateTime
+  screenName   String
+  user         User     @relation(fields: [userId], references: [id])
 }
 
 model InstagramAuth {
-  id            Int      @id @default(autoincrement())
-  userId        Int      @unique
-  user          User     @relation(fields: [userId], references: [id])
-  accessToken   String
-  tokenExpiry   DateTime?
-  username      String?
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  accessToken String
+  tokenExpiry DateTime
+  username    String
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+model ScheduledPost {
+  id        String   @id @default(uuid())
+  userId    String
+  content   String
+  imageUrl  String?
+  platform  String   // 'twitter' or 'instagram'
+  scheduleTime DateTime
+  status    String   // 'pending', 'published', 'failed'
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id])
 }
