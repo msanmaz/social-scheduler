@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import authRoutes from './routes/authRoutes.js';
 import postRoutes from './routes/postRoutes.js';
+import twitterRoutes from './routes/twitterRoutes.js';
 import { authenticateToken } from './middleware/authMiddleware.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 import { apiLimiter } from './middleware/rateLimitMiddleware.js';
@@ -43,11 +44,14 @@ app.use('/auth', authRoutes);
 // Use post routes (protected and cached)
 app.use('/api/posts', authenticateToken, cacheMiddleware, postRoutes);
 
+// Use Twitter routes
+app.use('/api/twitter', twitterRoutes);
+
 // Error handling middleware
 app.use(errorHandler);
 
 // Start server
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV === 'test') {
   app.listen(port, () => {
     logger.info(`Server running on port ${port}`);
   });

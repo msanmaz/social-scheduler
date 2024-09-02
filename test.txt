@@ -1,25 +1,12 @@
 -- /Users/mert/Desktop/social-media-scheduler/tests/authRoutes.test.js --
 // tests/authRoutes.test.js
 import request from 'supertest';
+import bcrypt from 'bcrypt';
 import app from '../src/index.js';
 import prisma from '../src/db/prisma.js';
 
 describe('Auth Routes', () => {
-  beforeAll(async () => {
-    // Clear the database before tests
-    await prisma.user.deleteMany();
-  });
-
-  afterAll(async () => {
-    // Clean up test database
-    await prisma.scheduledPost.deleteMany();
-    await prisma.user.deleteMany();
-    await prisma.$disconnect();
-  });
-
   beforeEach(async () => {
-    // Clear database before each test
-    await prisma.scheduledPost.deleteMany();
     await prisma.user.deleteMany();
   });
 
@@ -27,23 +14,47 @@ describe('Auth Routes', () => {
     const res = await request(app)
       .post('/auth/register')
       .send({
-        username: 'testuser2',
-        email: 'test2@example.com',
-        password: 'password123',
+        username: 'testuser',
+        email: 'test@gmail.com',
+        password: 'test123',
       });
     expect(res.statusCode).toBe(201);
     expect(res.body).toHaveProperty('user');
     expect(res.body.user).toHaveProperty('id');
-    expect(res.body.user.username).toBe('testuser2');
+    expect(res.body.user.username).toBe('testuser');
   });
 
   it('should login a user', async () => {
+    // Create a user first
+    const password = 'test123';
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const createdUser = await prisma.user.create({
+      data: {
+        username: 'testuser',
+        email: 'test@gmail.com',
+        password: hashedPassword,
+      },
+    });
+    console.log('Created user:', createdUser);
+
+    // Verify the user was created
+    const userInDb = await prisma.user.findUnique({ where: { email: 'test@gmail.com' } });
+    console.log('User in DB:', userInDb);
+
+    // Attempt login
     const res = await request(app)
       .post('/auth/login')
       .send({
         email: 'test@gmail.com',
-        password: 'test123',
+        password,
       });
+    console.log('Login response:', res.body);
+    // Additional logging
+    if (res.statusCode !== 200) {
+      console.log('Login failed. Status code:', res.statusCode);
+      console.log('Response body:', res.body);
+    }
+
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveProperty('token');
   });
@@ -53,93 +64,41 @@ describe('Auth Routes', () => {
       .post('/auth/login')
       .send({
         email: 'test@example.com',
-        password: 'wrongpassword'
+        password: 'wrongpassword',
       });
     expect(res.statusCode).toBe(401);
   });
 });
--- /Users/mert/Desktop/social-media-scheduler/tests/postRoutes.test.js --
-// tests/postRoutes.test.js
-import jwt from 'jsonwebtoken';
-import request from 'supertest';
-import app from '../src/index.js';
+
+-- /Users/mert/Desktop/social-media-scheduler/tests/setupTests.js --
 import prisma from '../src/db/prisma.js';
+import redisClient from '../src/config/redis.js';
 
-describe('Post Routes', () => {
-  let authToken;
-  let userId;
+beforeAll(async () => {
+  // Connect to the database
+  await prisma.$connect();
+});
 
-  beforeAll(async () => {
-    // Clear the database and create a test user
-    await prisma.scheduledPost.deleteMany();
-    await prisma.user.deleteMany();
-    const user = await prisma.user.create({
-      data: {
-        username: 'testuser',
-        email: 'test@example.com',
-        password: 'hashedpassword',
-      },
-    });
-    userId = user.id;
-    authToken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
-  });
+afterAll(async () => {
+  // Disconnect from the database
+  await prisma.$disconnect();
+  // Close Redis connection
+  await redisClient.quit();
+});
 
-  afterAll(async () => {
-    await prisma.$disconnect();
-  });
-
-  it('should create a new post', async () => {
-    const res = await request(app)
-      .post('/api/posts')
-      .set('Authorization', `Bearer ${authToken}`)
-      .send({
-        content: 'Test post',
-        platform: 'twitter',
-        scheduleTime: new Date().toISOString()
-      });
-    expect(res.statusCode).toBe(201);
-    expect(res.body).toHaveProperty('id');
-    expect(res.body.content).toBe('Test post');
-  });
-
-  it('should get all posts for a user', async () => {
-    const res = await request(app)
-      .get('/api/posts')
-      .set('Authorization', `Bearer ${authToken}`);
-    expect(res.statusCode).toBe(200);
-    expect(Array.isArray(res.body)).toBeTruthy();
-    expect(res.body.length).toBeGreaterThan(0);
-  });
-
-  it('should get a specific post', async () => {
-    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
-    const res = await request(app)
-      .get(`/api/posts/${post.id}`)
-      .set('Authorization', `Bearer ${authToken}`);
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toHaveProperty('id', post.id);
-  });
-
-  it('should update a post', async () => {
-    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
-    const res = await request(app)
-      .put(`/api/posts/${post.id}`)
-      .set('Authorization', `Bearer ${authToken}`)
-      .send({
-        content: 'Updated test post'
-      });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.content).toBe('Updated test post');
-  });
-
-  it('should delete a post', async () => {
-    const post = await prisma.scheduledPost.findFirst({ where: { userId } });
-    const res = await request(app)
-      .delete(`/api/posts/${post.id}`)
-      .set('Authorization', `Bearer ${authToken}`);
-    expect(res.statusCode).toBe(200);
-    expect(res.body.message).toBe('Post deleted successfully');
-  });
+beforeEach(async () => {
+  // Clear all tables before each test
+  const tablenames = await prisma.$queryRaw`SELECT tablename FROM pg_tables WHERE schemaname='public'`;
+  
+  for (const { tablename } of tablenames) {
+    if (tablename !== '_prisma_migrations') {
+      try {
+        await prisma.$executeRawUnsafe(`TRUNCATE TABLE "public"."${tablename}" CASCADE;`);
+      } catch (error) {
+        console.log({ error });
+      }
+    }
+  }
 });
 -- /Users/mert/Desktop/social-media-scheduler/tests/redis.test.js --
 // tests/redis.test.js
@@ -151,6 +110,111 @@ describe('Redis', () => {
     const res = await request(app).get('/redis-test');
     expect(res.statusCode).toBe(200);
     expect(res.body.message).toBe('Hello from Redis!');
+  });
+});
+-- /Users/mert/Desktop/social-media-scheduler/tests/twitterRoutes.test.js --
+import request from 'supertest';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import app from '../src/index.js';
+import prisma from '../src/db/prisma.js';
+import * as twitterAuthService from '../src/services/twitterAuthService.js';
+
+describe('Twitter Routes', () => {
+  let authToken;
+  let userId;
+
+  beforeEach(async () => {
+    await prisma.user.deleteMany();
+    await prisma.twitterAuth.deleteMany();
+    const password = await bcrypt.hash('hashpassword1', 10);
+    const user = await prisma.user.create({
+      data: {
+        username: 'testuser1',
+        email: 'test@example.com',
+        password,
+      },
+    });
+    userId = user.id;
+    authToken = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+
+    // Mock twitterAuthService methods
+    twitterAuthService.getTwitterAuthUrl = jest.fn();
+    twitterAuthService.handleTwitterCallback = jest.fn();
+    twitterAuthService.sendTweet = jest.fn();
+    twitterAuthService.verifyTwitterCredentials = jest.fn();
+  });
+
+  afterEach(() => {
+    // Clear all mocks
+    jest.restoreAllMocks();
+  });
+
+  describe('GET /api/twitter/auth', () => {
+    it('should initiate Twitter authentication', async () => {
+      twitterAuthService.getTwitterAuthUrl.mockResolvedValue('https://twitter.com/oauth/authorize?oauth_token=mock_token');
+
+      const res = await request(app)
+        .get('/api/twitter/auth')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty('authUrl');
+      expect(res.body.authUrl).toContain('https://twitter.com/oauth/authorize');
+      expect(twitterAuthService.getTwitterAuthUrl).toHaveBeenCalled();
+    });
+  });
+
+  describe('GET /api/twitter/callback', () => {
+    it('should handle Twitter callback successfully', async () => {
+      twitterAuthService.handleTwitterCallback.mockResolvedValue({
+        accessToken: 'mock_access_token',
+        accessTokenSecret: 'mock_access_token_secret',
+        screenName: 'testuser'
+      });
+
+      const res = await request(app)
+        .get('/api/twitter/callback?oauth_token=mock_token&oauth_verifier=mock_verifier')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty('message', 'Twitter authentication successful');
+      expect(res.body).toHaveProperty('screenName', 'testuser');
+    });
+  });
+
+  describe('POST /api/twitter/tweet', () => {
+    it('should send a tweet successfully', async () => {
+      twitterAuthService.sendTweet.mockResolvedValue({ id: 'mock_tweet_id', text: 'Test tweet' });
+
+      const res = await request(app)
+        .post('/api/twitter/tweet')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ content: 'Test tweet' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty('message', 'Tweet sent successfully');
+      expect(res.body).toHaveProperty('tweet');
+      expect(res.body.tweet).toHaveProperty('id', 'mock_tweet_id');
+    });
+  });
+
+  describe('GET /api/twitter/profile', () => {
+    it('should fetch Twitter user profile successfully', async () => {
+      twitterAuthService.verifyTwitterCredentials.mockResolvedValue({
+        id: 'mock_twitter_id',
+        screen_name: 'testuser',
+        name: 'Test User'
+      });
+
+      const res = await request(app)
+        .get('/api/twitter/profile')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty('id', 'mock_twitter_id');
+      expect(res.body).toHaveProperty('screen_name', 'testuser');
+    });
   });
 });
 -- /Users/mert/Desktop/social-media-scheduler/src/middleware/authMiddleware.js --
@@ -284,6 +348,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import authRoutes from './routes/authRoutes.js';
 import postRoutes from './routes/postRoutes.js';
+import twitterRoutes from './routes/twitterRoutes.js';
 import { authenticateToken } from './middleware/authMiddleware.js';
 import { errorHandler } from './middleware/errorMiddleware.js';
 import { apiLimiter } from './middleware/rateLimitMiddleware.js';
@@ -324,13 +389,18 @@ app.use('/auth', authRoutes);
 // Use post routes (protected and cached)
 app.use('/api/posts', authenticateToken, cacheMiddleware, postRoutes);
 
+// Use Twitter routes
+app.use('/api/twitter', twitterRoutes);
+
 // Error handling middleware
 app.use(errorHandler);
 
 // Start server
-app.listen(port, () => {
-  logger.info(`Server running on port ${port}`);
-});
+if (process.env.NODE_ENV === 'test') {
+  app.listen(port, () => {
+    logger.info(`Server running on port ${port}`);
+  });
+}
 
 export default app;
 
@@ -408,6 +478,29 @@ export const getUserWithSocialConnections = async (userId) => prisma.user.findUn
   include: { twitterAuth: true, instagramAuth: true },
 });
 
+export const getUserByTwitterToken = async (oauthToken) => prisma.user.findFirst({
+  where: {
+    twitterAuth: {
+      oauthToken,
+    },
+  },
+});
+
+// eslint-disable-next-line max-len
+export const storeTwitterCredentials = async (userId, accessToken, accessTokenSecret, screenName) => prisma.twitterAuth.upsert({
+  where: { userId },
+  update: {
+    accessToken,
+    accessTokenSecret,
+    screenName,
+  },
+  create: {
+    userId,
+    accessToken,
+    accessTokenSecret,
+    screenName,
+  },
+});
 -- /Users/mert/Desktop/social-media-scheduler/src/db/prisma.js --
 import { PrismaClient } from '@prisma/client';
 
@@ -581,21 +674,82 @@ export const register = async (req, res) => {
   }
 };
 
+
 export const login = async (req, res) => {
   try {
     const { email, password } = req.body;
+    console.log('Login attempt for email:', email);
     const user = await getUserByEmail(email);
+    console.log('User found:', user);
     if (!user) {
+      console.log('User not found');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    console.log('Is password valid:', isPasswordValid);
     if (!isPasswordValid) {
+      console.log('Invalid password');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    console.log('Token generated');
     return res.json({ message: 'Login successful', token });
   } catch (error) {
+    console.error('Error in login:', error);
     return res.status(500).json({ message: 'Error logging in', error: error.message });
+  }
+};
+
+-- /Users/mert/Desktop/social-media-scheduler/src/controllers/twitterController.js --
+import {
+  getTwitterAuthUrl, handleTwitterCallback as handleCallback,
+  verifyTwitterCredentials, sendTweet as postTweet,
+}
+  from '../services/twitterAuthService.js';
+import logger from '../utils/logger.js';
+
+export const initiateTwitterAuth = async (req, res) => {
+  try {
+    const authUrl = await getTwitterAuthUrl();
+    res.json({ authUrl });
+  } catch (error) {
+    logger.error('Error initiating Twitter auth:', error);
+    res.status(500).json({ message: 'Error initiating Twitter authentication' });
+  }
+};
+
+export const handleTwitterCallback = async (req, res) => {
+  try {
+    const { oauth_token, oauth_verifier } = req.query;
+    const userId = req.user.userId;
+    const result = await handleCallback(userId, oauth_token, oauth_verifier);
+    res.json({ message: 'Twitter authentication successful', screenName: result.screenName });
+  } catch (error) {
+    logger.error('Error handling Twitter callback:', error);
+    res.status(500).json({ message: 'Error handling Twitter callback' });
+  }
+};
+
+export const sendTweet = async (req, res) => {
+  try {
+    const { content } = req.body;
+    const userId = req.user.userId;
+    const result = await postTweet(userId, content);
+    res.json({ message: 'Tweet sent successfully', tweet: result });
+  } catch (error) {
+    logger.error('Error sending tweet:', error);
+    res.status(500).json({ message: 'Error sending tweet' });
+  }
+};
+
+export const getTwitterUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const profile = await verifyTwitterCredentials(userId);
+    res.json(profile);
+  } catch (error) {
+    logger.error('Error fetching Twitter profile:', error);
+    res.status(500).json({ message: 'Error fetching Twitter profile' });
   }
 };
 
@@ -607,6 +761,53 @@ const router = express.Router();
 
 router.post('/register', register);
 router.post('/login', login);
+
+export default router;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/routes/twitterRoutes.js --
+import express from 'express';
+import { body, query } from 'express-validator';
+import {
+  initiateTwitterAuth,
+  handleTwitterCallback,
+  sendTweet,
+  getTwitterUserProfile,
+} from '../controllers/twitterController.js';
+import { validateRequest } from '../middleware/validationMiddleware.js';
+import { authenticateToken } from '../middleware/authMiddleware.js';
+
+const router = express.Router();
+
+// Initiate Twitter authentication
+router.get('/auth', authenticateToken, initiateTwitterAuth);
+
+// Handle Twitter callback
+router.get(
+  '/callback',
+  authenticateToken,
+  [
+    query('oauth_token').notEmpty().withMessage('OAuth token is required'),
+    query('oauth_verifier').notEmpty().withMessage('OAuth verifier is required'),
+  ],
+  validateRequest,
+  handleTwitterCallback,
+);
+
+// Send a tweet
+router.post(
+  '/tweet',
+  authenticateToken,
+  [
+    body('content').notEmpty().withMessage('Tweet content is required')
+      .isLength({ max: 280 })
+      .withMessage('Tweet content must be 280 characters or less'),
+  ],
+  validateRequest,
+  sendTweet,
+);
+
+// Get Twitter user profile
+router.get('/profile', authenticateToken, getTwitterUserProfile);
 
 export default router;
 
@@ -764,4 +965,139 @@ const cancelScheduledPost = async (postId) => {
 };
 
 export { schedulePost, cancelScheduledPost };
+
+-- /Users/mert/Desktop/social-media-scheduler/src/services/twitterAuthService.js --
+import OAuth from 'oauth-1.0a';
+import crypto from 'crypto';
+import axios from 'axios';
+
+const callbackUrl = process.env.TWITTER_CALLBACK_URL;
+
+const oauth = new OAuth({
+  consumer: {
+    key: process.env.TWITTER_CONSUMER_KEY,
+    secret: process.env.TWITTER_CONSUMER_SECRET,
+  },
+  signature_method: 'HMAC-SHA1',
+  hash_function(baseString, key) {
+    return crypto.createHmac('sha1', key).update(baseString).digest('base64');
+  },
+});
+
+export const getTwitterAuthUrl = async () => {
+  const requestData = {
+    url: 'https://api.twitter.com/oauth/request_token',
+    method: 'POST',
+    data: {
+      oauth_callback: callbackUrl,
+    },
+  };
+
+  try {
+    console.log('Request Data:', requestData);
+    const auth = oauth.authorize(requestData);
+    console.log('OAuth Authorization:', auth);
+    const headers = oauth.toHeader(auth);
+    console.log('Request Headers:', headers);
+
+    const response = await axios.post(requestData.url, null, {
+      headers: {
+        ...headers,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    });
+
+    console.log('Response Data:', response.data);
+    const responseData = new URLSearchParams(response.data);
+    const oauthToken = responseData.get('oauth_token');
+    return `https://api.twitter.com/oauth/authenticate?oauth_token=${oauthToken}`;
+  } catch (error) {
+    console.error(
+      'Error getting Twitter auth URL:',
+      error.response ? error.response.data : error.message,
+    );
+    if (error.response) {
+      console.error('Response Status:', error.response.status);
+      console.error('Response Headers:', error.response.headers);
+    }
+    throw error;
+  }
+};
+
+// eslint-disable-next-line camelcase
+export const handleTwitterCallback = async (userId, oauth_token, oauth_verifier) => {
+  const requestData = {
+    url: 'https://api.twitter.com/oauth/access_token',
+    method: 'POST',
+    // eslint-disable-next-line camelcase
+    data: { oauth_token, oauth_verifier },
+  };
+
+  try {
+    const response = await axios.post(requestData.url, null, {
+      headers: oauth.toHeader(oauth.authorize(requestData)),
+    });
+
+    const { 
+      oauth_token: accessToken, 
+      oauth_token_secret: accessTokenSecret,
+      screen_name: screenName 
+    } = new URLSearchParams(response.data);
+
+    return { accessToken, accessTokenSecret, screenName };
+  } catch (error) {
+    console.error('Error handling Twitter callback:', error);
+    throw error;
+  }
+};
+
+
+export const verifyTwitterCredentials = async (accessToken, accessTokenSecret) => {
+  const requestData = {
+    url: 'https://api.twitter.com/1.1/account/verify_credentials.json',
+    method: 'GET',
+  };
+
+  const authHeader = oauth.toHeader(oauth.authorize(requestData, {
+    key: accessToken,
+    secret: accessTokenSecret,
+  }));
+
+  try {
+    const response = await axios.get(requestData.url, {
+      headers: authHeader,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error verifying Twitter credentials:', error);
+    throw error;
+  }
+};
+
+export const sendTweet = async (accessToken, accessTokenSecret, tweetContent) => {
+  const requestData = {
+    url: 'https://api.twitter.com/2/tweets',
+    method: 'POST',
+    data: { text: tweetContent },
+  };
+
+  const authHeader = oauth.toHeader(oauth.authorize(requestData, {
+    key: accessToken,
+    secret: accessTokenSecret,
+  }));
+
+  try {
+    const response = await axios.post(requestData.url, requestData.data, {
+      headers: {
+        ...authHeader,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error('Error sending tweet:', error);
+    throw error;
+  }
+};
 

@@ -48,3 +48,27 @@ export const getUserWithSocialConnections = async (userId) => prisma.user.findUn
   where: { id: userId },
   include: { twitterAuth: true, instagramAuth: true },
 });
+
+export const getUserByTwitterToken = async (oauthToken) => prisma.user.findFirst({
+  where: {
+    twitterAuth: {
+      oauthToken,
+    },
+  },
+});
+
+// eslint-disable-next-line max-len
+export const storeTwitterCredentials = async (userId, accessToken, accessTokenSecret, screenName) => prisma.twitterAuth.upsert({
+  where: { userId },
+  update: {
+    accessToken,
+    accessTokenSecret,
+    screenName,
+  },
+  create: {
+    userId,
+    accessToken,
+    accessTokenSecret,
+    screenName,
+  },
+});

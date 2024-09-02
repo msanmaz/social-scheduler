@@ -28,10 +28,9 @@ model User {
 model TwitterAuth {
   id           String   @id @default(uuid())
   userId       String   @unique
-  accessToken  String
-  refreshToken String
-  tokenExpiry  DateTime
-  screenName   String
+  accessToken      String
+  accessTokenSecret String
+  screenName       String
   user         User     @relation(fields: [userId], references: [id])
 }
 
