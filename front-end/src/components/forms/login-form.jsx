@@ -5,20 +5,29 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { loginUser } from '@/actions/auth';
 import SignInButton from '../action-buttons/signin-button';
+import { useState } from "react";
 
 export function LoginForm() {
   const router = useRouter();
+  const [error, setError] = useState(null);
 
   const handleSubmit = async (formData) => {
-    const response = await loginUser(formData);
-    console.log(response,'resp');
-    if (response.success) {
-      console.log(response);
-      router.push('/dashboard');
-    } else {
-      console.error(response);
+    try {
+      const response = await loginUser(formData);
+      console.log(response, 'resp');
+      if (response.success) {
+        console.log(response);
+        router.push('/dashboard');
+      } else {
+        setError(response.message);
+        console.error(response);
+      }
+    } catch (err) {
+      setError(err.message);
+      console.error(err);
     }
   };
+
   return (
     <div className="container max-w-2xl mx-auto p-4">
       <h2 className="text-3xl font-bold mb-6">Login</h2>
@@ -54,6 +63,7 @@ export function LoginForm() {
         <div className="flex items-center justify-center">
         <SignInButton login={true}/>
         </div>
+        {error && <div className="text-red-500 mb-4">{error}</div>}
       </form>
     </div>
   );

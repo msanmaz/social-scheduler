@@ -6,7 +6,16 @@ export const comparePasswords = (password, hash) => bcrypt.compare(password, has
 export const hashPassword = (password) => bcrypt.hash(password, 5);
 
 export const createJWT = (user) => {
-  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const secretBuffer = Buffer.from(process.env.JWT_SECRET, 'base64');
+
+  const token = jwt.sign(
+    { id: user.id },
+    secretBuffer,
+    {
+      expiresIn: '1h',
+      algorithm: 'HS256',
+    },
+  );
   return token;
 };
 

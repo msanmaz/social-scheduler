@@ -2,7 +2,7 @@ import express from 'express';
 import { body, query } from 'express-validator';
 import {
   initiateTwitterAuth,
-  handleTwitterCallback,
+  handleTwitterCallbackController,
   sendTweet,
   getTwitterUserProfile,
 } from '../controllers/twitterController.js';
@@ -23,7 +23,7 @@ router.get(
     query('oauth_verifier').notEmpty().withMessage('OAuth verifier is required'),
   ],
   validateRequest,
-  handleTwitterCallback,
+  handleTwitterCallbackController,
 );
 
 // Send a tweet

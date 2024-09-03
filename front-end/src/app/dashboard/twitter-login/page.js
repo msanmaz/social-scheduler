@@ -1,28 +1,26 @@
+'use client';
+
+/* eslint-disable camelcase */
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { twitterApi } from '@/services/api';
 
 const TwitterLogin = () => {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const handleTwitterCallback = async (oauthToken, oauthVerifier) => {
     setIsLoading(true);
     setError(null);
     try {
-      // eslint-disable-next-line max-len
-      const response = await axios.get(`/api/twitter/callback?oauth_token=${oauthToken}&oauth_verifier=${oauthVerifier}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-      // Handle successful authentication
-      console.log('Twitter authentication successful:', response.data);
-      navigate('/dashboard'); // Redirect to dashboard or appropriate page
+      await twitterApi.handleCallback(oauthToken, oauthVerifier);
+      setIsAuthenticated(true);
+      router.push('/dashboard'); // Redirect to dashboard or appropriate page
     } catch (err) {
       setError('Failed to complete Twitter authentication');
       console.error(err);
@@ -32,24 +30,18 @@ const TwitterLogin = () => {
   };
 
   useEffect(() => {
-    const urlParams = new URLSearchParams(location.search);
-    const oauthToken = urlParams.get('oauth_token');
-    const oauthVerifier = urlParams.get('oauth_verifier');
-
+    const oauthToken = searchParams.get('oauth_token');
+    const oauthVerifier = searchParams.get('oauth_verifier');
     if (oauthToken && oauthVerifier) {
       handleTwitterCallback(oauthToken, oauthVerifier);
     }
-  }, [location]);
+  }, [searchParams]);
 
   const initiateTwitterAuth = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/twitter/auth', {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
+      const response = await twitterApi.initiateAuth();
       window.location.href = response.data.authUrl;
     } catch (err) {
       setError('Failed to initiate Twitter authentication');
@@ -68,13 +60,17 @@ const TwitterLogin = () => {
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
-        <Button
-          onClick={initiateTwitterAuth}
-          disabled={isLoading}
-          className="w-full"
-        >
-          {isLoading ? 'Connecting...' : 'Connect Twitter Account'}
-        </Button>
+        {isAuthenticated ? (
+          <p className="text-green-600 font-semibold">Connected to Twitter</p>
+        ) : (
+          <Button
+            onClick={initiateTwitterAuth}
+            disabled={isLoading}
+            className="w-full"
+          >
+            {isLoading ? 'Connecting...' : 'Connect Twitter Account'}
+          </Button>
+        )}
       </div>
     </div>
   );

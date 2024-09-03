@@ -30,6 +30,7 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     const token = createJWT(user);
+    user.token = token;
     const serializedCookie = serialize('token', token, {
       httpOnly: true,
       secure: false,
@@ -38,7 +39,7 @@ export const login = async (req, res) => {
       domain: 'localhost',
     });
     res.setHeader('Set-Cookie', serializedCookie);
-    return res.json({ message: 'Login successful', token });
+    return res.json({ success: true, user });
   } catch (error) {
     console.error('Error in login:', error);
     return res.status(500).json({ message: 'Error logging in', error: error.message });

@@ -39,16 +39,16 @@ export const getTwitterUserProfile = async (req, res) => {
   }
 };
 
-export const handleTwitterCallback = async (req, res) => {
+export const handleTwitterCallbackController = async (req, res) => {
   const { oauth_token, oauth_verifier } = req.query;
-  const { userId } = req.user;
+  const { id: userId } = req.user;
 
   if (!oauth_token || !oauth_verifier) {
     return res.status(400).json({ error: 'Missing required OAuth parameters' });
   }
 
   try {
-    const result = await handleCallback(oauth_token, oauth_verifier);
+    const result = await handleCallback(userId, oauth_token, oauth_verifier);
     res.json({
       success: true,
       message: 'Twitter authentication successful',

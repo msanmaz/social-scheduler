@@ -58,7 +58,7 @@ export const getTwitterAuthUrl = async () => {
   }
 };
 
-export const handleTwitterCallback = async (oauthToken, oauthVerifier) => {
+export const handleTwitterCallback = async (userId, oauthToken, oauthVerifier) => {
   const requestData = {
     url: 'https://api.twitter.com/oauth/access_token',
     method: 'POST',

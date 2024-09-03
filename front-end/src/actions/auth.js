@@ -27,29 +27,39 @@ export async function registerUser(formData) {
 }
 
 export async function loginUser(formData) {
-  const email = formData.get('email');
-  const password = formData.get('password');
+  try {
+    const email = formData.get('email');
+    const password = formData.get('password');
 
-  const response = await fetch('http://localhost:3000/auth/login', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ email, password }),
-    credentials: 'include',
-  });
+    const response = await fetch('http://localhost:3000/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }),
+      credentials: 'include',
+    });
 
-  if (!response.ok) {
-    throw new Error('Registration failed');
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.message || 'Login failed');
+    }
+
+    const respCookie = response.headers.get('set-cookie')?.split(';')[0].split('=')[1] || '';
+    if (respCookie === '') {
+      return { success: false, message: 'Not Authenticated!' };
+    }
+
+    cookies().set({
+      name: 'token',
+      value: respCookie,
+      path: '/',
+      maxAge: 60 * 60 * 24 * 30, // 30 days
+    });
+
+    revalidatePath('/dashboard');
+    return { success: true, message: 'Login successful!' };
+  } catch (error) {
+    return { success: false, message: error.message };
   }
-
-  const user = await response.json();
-  cookies().set({
-    name: 'token',
-    value: user.token,
-    path: '/',
-    maxAge: 60 * 60 * 24 * 30, // 30 days
-  });
-  // revalidatePath('/dashboard');
-  return { success: true, message: 'Login successful!' };
 }

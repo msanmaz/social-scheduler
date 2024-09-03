@@ -19,7 +19,7 @@ const port = process.env.PORT || 3000;
 app.use(express.json());
 app.use(apiLimiter);
 app.use(cors({
-  origin: 'http://localhost:3001', // your Next.js app's address
+  origin: 'http://localhost:3001',
   credentials: true,
 }));
 
