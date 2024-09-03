@@ -1,6 +1,7 @@
 // src/index.js
 import dotenv from 'dotenv';
 import express from 'express';
+import cors from 'cors';
 import authRoutes from './routes/authRoutes.js';
 import postRoutes from './routes/postRoutes.js';
 import twitterRoutes from './routes/twitterRoutes.js';
@@ -17,6 +18,10 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(apiLimiter);
+app.use(cors({
+  origin: 'http://localhost:3001', // your Next.js app's address
+  credentials: true,
+}));
 
 // Redis test route
 app.get('/redis-test', async (req, res) => {

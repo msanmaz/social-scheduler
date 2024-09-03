@@ -16,25 +16,6 @@ export const initiateTwitterAuth = async (req, res) => {
   }
 };
 
-export const handleTwitterCallback = async (req, res) => {
-  try {
-    const { oauth_token, oauth_verifier } = req.query;
-    const { userId } = req.user;
-
-    if (!oauth_token || !oauth_verifier) {
-      return res.status(400).json({ message: 'Missing required OAuth parameters' });
-    }
-
-    const result = await handleCallback(userId, oauth_token, oauth_verifier);
-    res.json({ message: 'Twitter authentication successful', screenName: result.screenName });
-  } catch (error) {
-    logger.error('Error handling Twitter callback:', error);
-    res.status(500).json({
-      message: 'Failed to complete Twitter authentication. Please try again.',
-    });
-  }
-};
-
 export const sendTweet = async (req, res) => {
   try {
     const { content } = req.body;
@@ -55,5 +36,28 @@ export const getTwitterUserProfile = async (req, res) => {
   } catch (error) {
     logger.error('Error fetching Twitter profile:', error);
     res.status(500).json({ message: 'Error fetching Twitter profile' });
+  }
+};
+
+export const handleTwitterCallback = async (req, res) => {
+  const { oauth_token, oauth_verifier } = req.query;
+  const { userId } = req.user;
+
+  if (!oauth_token || !oauth_verifier) {
+    return res.status(400).json({ error: 'Missing required OAuth parameters' });
+  }
+
+  try {
+    const result = await handleCallback(oauth_token, oauth_verifier);
+    res.json({
+      success: true,
+      message: 'Twitter authentication successful',
+      data: {
+        screenName: result.screenName,
+      },
+    });
+  } catch (error) {
+    logger.error('Error handling Twitter callback:', error);
+    res.status(500).json({ error: 'Failed to complete Twitter authentication' });
   }
 };

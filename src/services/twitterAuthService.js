@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import { storeTwitterCredentials } from '../models/userModel.js';
 import logger from '../utils/logger.js';
+import prisma from '../db/prisma.js';
 
 const callbackUrl = process.env.TWITTER_CALLBACK_URL;
 
@@ -57,38 +58,33 @@ export const getTwitterAuthUrl = async () => {
   }
 };
 
-// eslint-disable-next-line camelcase
-export const handleTwitterCallback = async (userId, oauth_token, oauth_verifier) => {
+export const handleTwitterCallback = async (oauthToken, oauthVerifier) => {
   const requestData = {
     url: 'https://api.twitter.com/oauth/access_token',
     method: 'POST',
-    // eslint-disable-next-line camelcase
-    data: { oauth_token, oauth_verifier },
   };
 
   try {
-    const response = await axios.post(requestData.url, null, {
-      headers: oauth.toHeader(oauth.authorize(requestData)),
-    });
-
-    logger.info('Twitter callback response:', response.data);
+    const auth = oauth.authorize(requestData);
+    const response = await axios.post(
+      `${requestData.url}?oauth_token=${oauthToken}&oauth_verifier=${oauthVerifier}`,
+      null,
+      { headers: oauth.toHeader(auth) },
+    );
 
     const responseParams = new URLSearchParams(response.data);
     const accessToken = responseParams.get('oauth_token');
     const accessTokenSecret = responseParams.get('oauth_token_secret');
     const screenName = responseParams.get('screen_name');
 
-    if (!accessToken || !accessTokenSecret || !screenName) {
-      throw new Error('Missing required parameters in Twitter response');
-    }
-
-    // Store the Twitter credentials in the database
     await storeTwitterCredentials(userId, accessToken, accessTokenSecret, screenName);
 
-    return { accessToken, accessTokenSecret, screenName };
+    return {
+      accessToken, accessTokenSecret, screenName, userId,
+    };
   } catch (error) {
-    logger.error('Error handling Twitter callback:', error);
-    throw error;
+    logger.error('Error in Twitter callback:', error);
+    throw new Error('Failed to complete Twitter authentication');
   }
 };
 
@@ -137,6 +133,33 @@ export const sendTweet = async (accessToken, accessTokenSecret, tweetContent) =>
     return response.data;
   } catch (error) {
     console.error('Error sending tweet:', error);
+    throw error;
+  }
+};
+
+export const verifyOAuthToken = async (oauthToken) => {
+  try {
+    const authRequest = await prisma.twitterAuthRequest.findUnique({
+      where: { requestToken: oauthToken },
+    });
+
+    if (!authRequest) {
+      return false;
+    }
+
+    // Check if the token is not older than 15 minutes
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    if (authRequest.createdAt < fifteenMinutesAgo) {
+      // Token has expired, delete it
+      await prisma.twitterAuthRequest.delete({
+        where: { id: authRequest.id },
+      });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    logger.error('Error verifying OAuth token:', error);
     throw error;
   }
 };

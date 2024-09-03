@@ -346,6 +346,7 @@ export default redisClient;
 // src/index.js
 import dotenv from 'dotenv';
 import express from 'express';
+import cors from 'cors';
 import authRoutes from './routes/authRoutes.js';
 import postRoutes from './routes/postRoutes.js';
 import twitterRoutes from './routes/twitterRoutes.js';
@@ -362,6 +363,10 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(apiLimiter);
+app.use(cors({
+  origin: 'http://localhost:3001', // your Next.js app's address
+  credentials: true,
+}));
 
 // Redis test route
 app.get('/redis-test', async (req, res) => {
@@ -425,6 +430,21 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 export default logger;
+
+-- /Users/mert/Desktop/social-media-scheduler/src/utils/auth.js --
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
+
+export const comparePasswords = (password, hash) => bcrypt.compare(password, hash);
+
+export const hashPassword = (password) => bcrypt.hash(password, 5);
+
+export const createJWT = (user) => {
+  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  return token;
+};
+
+export const verifyToken = (token) => jwt.verify(token, process.env.JWT_SECRET);
 
 -- /Users/mert/Desktop/social-media-scheduler/src/models/userModel.js --
 import bcrypt from 'bcrypt';
@@ -501,6 +521,7 @@ export const storeTwitterCredentials = async (userId, accessToken, accessTokenSe
     screenName,
   },
 });
+
 -- /Users/mert/Desktop/social-media-scheduler/src/db/prisma.js --
 import { PrismaClient } from '@prisma/client';
 
@@ -660,9 +681,10 @@ export const getPostAnalytics = async (req, res) => {
 };
 
 -- /Users/mert/Desktop/social-media-scheduler/src/controllers/authController.js --
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import { serialize } from 'cookie';
 import { createUser, getUserByEmail } from '../models/userModel.js';
+import { createJWT, verifyToken } from '../utils/auth.js';
 
 export const register = async (req, res) => {
   try {
@@ -673,7 +695,6 @@ export const register = async (req, res) => {
     res.status(500).json({ message: 'Error creating user', error: error.message });
   }
 };
-
 
 export const login = async (req, res) => {
   try {
@@ -686,13 +707,20 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
     const isPasswordValid = await bcrypt.compare(password, user.password);
-    console.log('Is password valid:', isPasswordValid);
+
     if (!isPasswordValid) {
       console.log('Invalid password');
       return res.status(401).json({ message: 'Invalid credentials' });
     }
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    console.log('Token generated');
+    const token = createJWT(user);
+    const serializedCookie = serialize('token', token, {
+      httpOnly: true,
+      secure: false,
+      maxAge: 60 * 60 * 24 * 7, // 1 week
+      path: '/', // Make cookie available for all routes
+      domain: 'localhost',
+    });
+    res.setHeader('Set-Cookie', serializedCookie);
     return res.json({ message: 'Login successful', token });
   } catch (error) {
     console.error('Error in login:', error);
@@ -700,7 +728,37 @@ export const login = async (req, res) => {
   }
 };
 
+export const verifyJwtToken = (req, res) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader) {
+    return res.status(401).json({ success: false, message: 'Authorization header is missing' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Token is missing from the authorization header',
+    });
+  }
+
+  try {
+    const user = verifyToken(token);
+    return res.status(200).json({ success: true, user });
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Token has expired' });
+    }
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ success: false, message: 'Invalid token' });
+    }
+    return res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
+
 -- /Users/mert/Desktop/social-media-scheduler/src/controllers/twitterController.js --
+/* eslint-disable camelcase */
 import {
   getTwitterAuthUrl, handleTwitterCallback as handleCallback,
   verifyTwitterCredentials, sendTweet as postTweet,
@@ -718,22 +776,10 @@ export const initiateTwitterAuth = async (req, res) => {
   }
 };
 
-export const handleTwitterCallback = async (req, res) => {
-  try {
-    const { oauth_token, oauth_verifier } = req.query;
-    const userId = req.user.userId;
-    const result = await handleCallback(userId, oauth_token, oauth_verifier);
-    res.json({ message: 'Twitter authentication successful', screenName: result.screenName });
-  } catch (error) {
-    logger.error('Error handling Twitter callback:', error);
-    res.status(500).json({ message: 'Error handling Twitter callback' });
-  }
-};
-
 export const sendTweet = async (req, res) => {
   try {
     const { content } = req.body;
-    const userId = req.user.userId;
+    const { userId } = req.user;
     const result = await postTweet(userId, content);
     res.json({ message: 'Tweet sent successfully', tweet: result });
   } catch (error) {
@@ -744,7 +790,7 @@ export const sendTweet = async (req, res) => {
 
 export const getTwitterUserProfile = async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const { userId } = req.user;
     const profile = await verifyTwitterCredentials(userId);
     res.json(profile);
   } catch (error) {
@@ -753,14 +799,38 @@ export const getTwitterUserProfile = async (req, res) => {
   }
 };
 
+export const handleTwitterCallback = async (req, res) => {
+  const { oauth_token, oauth_verifier } = req.query;
+  const { userId } = req.user;
+
+  if (!oauth_token || !oauth_verifier) {
+    return res.status(400).json({ error: 'Missing required OAuth parameters' });
+  }
+
+  try {
+    const result = await handleCallback(oauth_token, oauth_verifier);
+    res.json({
+      success: true,
+      message: 'Twitter authentication successful',
+      data: {
+        screenName: result.screenName,
+      },
+    });
+  } catch (error) {
+    logger.error('Error handling Twitter callback:', error);
+    res.status(500).json({ error: 'Failed to complete Twitter authentication' });
+  }
+};
+
 -- /Users/mert/Desktop/social-media-scheduler/src/routes/authRoutes.js --
 import express from 'express';
-import { register, login } from '../controllers/authController.js';
+import { register, login, verifyJwtToken } from '../controllers/authController.js';
 
 const router = express.Router();
 
 router.post('/register', register);
 router.post('/login', login);
+router.get('/verify-token', verifyJwtToken);
 
 export default router;
 
@@ -970,6 +1040,9 @@ export { schedulePost, cancelScheduledPost };
 import OAuth from 'oauth-1.0a';
 import crypto from 'crypto';
 import axios from 'axios';
+import { storeTwitterCredentials } from '../models/userModel.js';
+import logger from '../utils/logger.js';
+import prisma from '../db/prisma.js';
 
 const callbackUrl = process.env.TWITTER_CALLBACK_URL;
 
@@ -1024,33 +1097,35 @@ export const getTwitterAuthUrl = async () => {
   }
 };
 
-// eslint-disable-next-line camelcase
-export const handleTwitterCallback = async (userId, oauth_token, oauth_verifier) => {
+export const handleTwitterCallback = async (oauthToken, oauthVerifier) => {
   const requestData = {
     url: 'https://api.twitter.com/oauth/access_token',
     method: 'POST',
-    // eslint-disable-next-line camelcase
-    data: { oauth_token, oauth_verifier },
   };
 
   try {
-    const response = await axios.post(requestData.url, null, {
-      headers: oauth.toHeader(oauth.authorize(requestData)),
-    });
+    const auth = oauth.authorize(requestData);
+    const response = await axios.post(
+      `${requestData.url}?oauth_token=${oauthToken}&oauth_verifier=${oauthVerifier}`,
+      null,
+      { headers: oauth.toHeader(auth) },
+    );
 
-    const { 
-      oauth_token: accessToken, 
-      oauth_token_secret: accessTokenSecret,
-      screen_name: screenName 
-    } = new URLSearchParams(response.data);
+    const responseParams = new URLSearchParams(response.data);
+    const accessToken = responseParams.get('oauth_token');
+    const accessTokenSecret = responseParams.get('oauth_token_secret');
+    const screenName = responseParams.get('screen_name');
 
-    return { accessToken, accessTokenSecret, screenName };
+    await storeTwitterCredentials(userId, accessToken, accessTokenSecret, screenName);
+
+    return {
+      accessToken, accessTokenSecret, screenName, userId,
+    };
   } catch (error) {
-    console.error('Error handling Twitter callback:', error);
-    throw error;
+    logger.error('Error in Twitter callback:', error);
+    throw new Error('Failed to complete Twitter authentication');
   }
 };
-
 
 export const verifyTwitterCredentials = async (accessToken, accessTokenSecret) => {
   const requestData = {
@@ -1097,6 +1172,33 @@ export const sendTweet = async (accessToken, accessTokenSecret, tweetContent) =>
     return response.data;
   } catch (error) {
     console.error('Error sending tweet:', error);
+    throw error;
+  }
+};
+
+export const verifyOAuthToken = async (oauthToken) => {
+  try {
+    const authRequest = await prisma.twitterAuthRequest.findUnique({
+      where: { requestToken: oauthToken },
+    });
+
+    if (!authRequest) {
+      return false;
+    }
+
+    // Check if the token is not older than 15 minutes
+    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
+    if (authRequest.createdAt < fifteenMinutesAgo) {
+      // Token has expired, delete it
+      await prisma.twitterAuthRequest.delete({
+        where: { id: authRequest.id },
+      });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    logger.error('Error verifying OAuth token:', error);
     throw error;
   }
 };
