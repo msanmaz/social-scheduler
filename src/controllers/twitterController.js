@@ -49,15 +49,25 @@ export const handleTwitterCallbackController = async (req, res) => {
 
   try {
     const result = await handleCallback(userId, oauth_token, oauth_verifier);
-    res.json({
-      success: true,
-      message: 'Twitter authentication successful',
-      data: {
-        screenName: result.screenName,
-      },
-    });
+
+    // Construct the frontend URL with query parameters
+    const frontendUrl = new URL(process.env.FRONTEND_URL);
+    frontendUrl.pathname = '/auth/twitter/callback'; // Adjust this path as needed
+    frontendUrl.searchParams.append('status', 'success');
+    frontendUrl.searchParams.append('screenName', result.screenName);
+    frontendUrl.searchParams.append('userId', userId);
+
+    // Redirect to the frontend
+    res.redirect(frontendUrl.toString());
   } catch (error) {
     logger.error('Error handling Twitter callback:', error);
-    res.status(500).json({ error: 'Failed to complete Twitter authentication' });
+
+    // Redirect to frontend with error information
+    const frontendUrl = new URL(process.env.FRONTEND_URL);
+    frontendUrl.pathname = '/auth/twitter/callback'; // Adjust this path as needed
+    frontendUrl.searchParams.append('status', 'error');
+    frontendUrl.searchParams.append('message', 'Failed to complete Twitter authentication');
+
+    res.redirect(frontendUrl.toString());
   }
 };
